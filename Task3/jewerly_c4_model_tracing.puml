@@ -1,0 +1,78 @@
+@startuml jewerly_c4_model_tracing
+!include <C4/C4_Container>
+
+title Jewerly Store System - C4 Container Diagram with Tracing
+
+AddElementTag("tracing", $bgColor="#f8cecc", $borderColor="#b85450", $fontColor="#000000")
+AddRelTag("tracing", $lineColor="#b85450", $textColor="#b85450")
+
+Person(customer, "Customer", "Creates orders and uploads or designs 3d models")
+Person(seller, "Seller", "Operates with orders and confirms manufacturing for users")
+Person(operator, "Operator", "Takes orders in work and manufactures jewelry")
+Person(apiUser, "API user", "External partner using public API")
+
+System_Boundary(jewerlyStore, "Jewerly Store System") {
+  Container(internetShop, "Internet Shop", "Vue, TypeScript, Three.js", "User can make an order, upload a 3d model, and work in 3d editor")
+  Container(shopApi, "Shop API", "Spring Boot", "Provides shop items, receives 3d files, and stores customer order data")
+  ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Holds customer and order data")
+
+  Container(crm, "CRM", "Vue, TypeScript", "Seller-facing order management UI")
+  Container(crmApi, "CRM API", "Spring Boot", "Manages CRM order operations")
+
+  Container(mes, "MES", "React, TypeScript", "Operator UI for assigning orders and viewing order lists")
+  Container(mesApi, "MES API", "C#", "Assigns orders to operators, shows order lists, and calculates order price")
+  ContainerDb(mesDb, "MES DB", "PostgreSQL", "Holds orders, operator assignments, and MES-side statuses")
+
+  ContainerQueue(messagesQueue, "Messages Queue", "RabbitMQ", "Sends messages about new orders and status changes between containers")
+  ContainerDb(filesStorage, "3d files storage", "S3-based storage", "Stores 3d files so that price can be calculated")
+
+  Container(traceContext, "Trace context", "HTTP/RabbitMQ metadata", "trace_id, span_id, order_id", $tags="tracing")
+  Container(traceSdk, "OpenTelemetry SDK", "Instrumentation library", "Instrumentation in APIs", $tags="tracing")
+  Container(traceCollector, "OpenTelemetry Collector", "OpenTelemetry", "Receives and exports spans from instrumented services", $tags="tracing")
+  Container(traceStorage, "Trace Storage / UI", "Jaeger or Grafana Tempo", "Stores traces and provides UI for investigation", $tags="tracing")
+}
+
+Rel(customer, internetShop, "Uses")
+Rel(internetShop, shopApi, "Calls")
+Rel(shopApi, shopDb, "Reads and writes")
+Rel(shopApi, filesStorage, "Uploads files")
+
+Rel(seller, crm, "Uses")
+Rel(crm, crmApi, "Calls")
+Rel(crmApi, shopDb, "Reads and writes")
+Rel(crmApi, messagesQueue, "Publishes and consumes order events")
+Rel(filesStorage, crmApi, "Provides 3d files metadata")
+
+Rel(operator, mes, "Uses")
+Rel(mes, mesApi, "Calls")
+Rel(mesApi, mesDb, "Reads and writes")
+Rel(mesApi, filesStorage, "Reads 3d files")
+Rel(mesApi, messagesQueue, "Publishes and consumes order events")
+
+Rel(apiUser, mesApi, "Calls public API")
+
+Rel(traceSdk, traceContext, "Propagates context", $tags="tracing")
+Rel(shopApi, traceCollector, "Exports spans", $tags="tracing")
+Rel(crmApi, traceCollector, "Exports spans", $tags="tracing")
+Rel(mesApi, traceCollector, "Exports spans", $tags="tracing")
+Rel(traceSdk, traceCollector, "Exports SDK spans", $tags="tracing")
+Rel(traceCollector, traceStorage, "Stores traces", $tags="tracing")
+
+Lay_R(customer, internetShop)
+Lay_R(internetShop, shopApi)
+Lay_R(shopApi, shopDb)
+Lay_D(shopApi, filesStorage)
+
+Lay_R(seller, crm)
+Lay_R(crm, crmApi)
+Lay_R(crmApi, messagesQueue)
+
+Lay_R(operator, mes)
+Lay_U(mes, mesApi)
+Lay_R(mesApi, mesDb)
+Lay_R(apiUser, mesApi)
+
+Lay_R(traceCollector, traceStorage)
+
+SHOW_LEGEND()
+@enduml

@@ -1,78 +1,89 @@
 @startuml jewerly_c4_model_tracing_solution
-!include <C4/C4_Container>
+!include <C4/C4_Component>
 
-title Jewerly Store System - tracing solution
+title Ювелирная система - решение по трейсингу
 
 AddElementTag("tracing", $bgColor="#f8cecc", $borderColor="#b85450", $fontColor="#000000")
 AddRelTag("tracing", $lineColor="#b85450", $textColor="#b85450")
 
-Person(customer, "Customer", "Creates orders and uploads or designs 3d models")
-Person(seller, "Seller", "Operates with orders and confirms manufacturing for users")
-Person(operator, "Operator", "Takes orders in work and manufactures jewelry")
-Person(apiUser, "API user", "External partner using public API")
+Person(customer, "Покупатель", "Создает заказы и загружает или проектирует 3D-модели")
+Person(seller, "Продавец", "Работает с заказами и подтверждает запуск производства")
+Person(operator, "Оператор", "Берет заказы в работу и изготавливает изделия")
+Person(apiUser, "Пользователь API", "Внешний партнер, который создает заказы через API")
 
-System_Boundary(jewerlyStore, "Jewerly Store System") {
-  Container(internetShop, "Internet Shop", "Vue, TypeScript, Three.js", "User can make an order, upload a 3d model, and work in 3d editor")
-  Container(shopApi, "Shop API", "Spring Boot", "Provides shop items, receives 3d files, and stores customer order data")
-  ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Holds customer and order data")
+System_Boundary(jewerlyStore, "Ювелирная система") {
+  System_Boundary(applicationLayer, "Прикладной слой") {
+    Container(internetShop, "Онлайн-магазин", "Vue, TypeScript, Three.js", "Позволяет оформить заказ, загрузить 3D-модель и работать в 3D-редакторе")
+    ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Хранит данные покупателей и заказов онлайн-магазина")
 
-  Container(crm, "CRM", "Vue, TypeScript", "Seller-facing order management UI")
-  Container(crmApi, "CRM API", "Spring Boot", "Manages CRM order operations")
+    Container_Boundary(shopApiBoundary, "Shop API") {
+      Component(shopApiApp, "Основная логика Shop API", "Spring Boot", "Отдает витрину, принимает 3D-файлы и сохраняет данные заказа")
+      Component(shopApiTracing, "Компонент трейсинга", "OpenTelemetry SDK / agent", "Создает spans и передает trace context", $tags="tracing")
+    }
 
-  Container(mes, "MES", "React, TypeScript", "Operator UI for assigning orders and viewing order lists")
-  Container(mesApi, "MES API", "C#", "Assigns orders to operators, shows order lists, and calculates order price")
-  ContainerDb(mesDb, "MES DB", "PostgreSQL", "Holds orders, operator assignments, and MES-side statuses")
+    Container(crm, "CRM", "Vue, TypeScript", "Интерфейс продавца для работы с заказами")
+    Container_Boundary(crmApiBoundary, "CRM API") {
+      Component(crmApiApp, "Основная логика CRM API", "Spring Boot", "Управляет операциями CRM по заказам")
+      Component(crmApiTracing, "Компонент трейсинга", "OpenTelemetry SDK / agent", "Создает spans и передает trace context", $tags="tracing")
+    }
 
-  ContainerQueue(messagesQueue, "Messages Queue", "RabbitMQ", "Sends messages about new orders and status changes between containers")
-  ContainerDb(filesStorage, "3d files storage", "S3-based storage", "Stores 3d files so that price can be calculated")
+    Container(mes, "MES", "React, TypeScript", "Интерфейс оператора для просмотра и назначения заказов")
+    Container_Boundary(mesApiBoundary, "MES API") {
+      Component(mesApiApp, "Основная логика MES API", "C#", "Назначает заказы, показывает списки и рассчитывает стоимость")
+      Component(mesApiTracing, "Компонент трейсинга", "OpenTelemetry SDK / agent", "Создает spans и передает trace context", $tags="tracing")
+    }
+    ContainerDb(mesDb, "MES DB", "PostgreSQL", "Хранит заказы, назначения операторов и статусы со стороны MES")
 
-  Container(traceContext, "Trace context", "HTTP and RabbitMQ headers", "trace_id, span_id, order_id", $tags="tracing")
-  Container(traceSdk, "OpenTelemetry SDK", "Java/.NET instrumentation", "Creates spans in Shop API, CRM API and MES API", $tags="tracing")
-  Container(traceCollector, "OpenTelemetry Collector", "OpenTelemetry", "Receives, filters and exports spans", $tags="tracing")
-  Container(traceStorage, "Trace Storage / UI", "Jaeger or Grafana Tempo", "Stores traces and provides search UI", $tags="tracing")
+    ContainerQueue(messagesQueue, "Очередь сообщений", "RabbitMQ", "Передает события о новых заказах и изменениях статусов между системами")
+    ContainerDb(filesStorage, "Хранилище 3D-файлов", "S3-based storage", "Хранит 3D-файлы, необходимые для расчета стоимости")
+  }
+
+  System_Boundary(tracingLayer, "Слой трейсинга") {
+    Container(traceCollector, "OpenTelemetry Collector", "OpenTelemetry", "Принимает, фильтрует и отправляет spans в Jaeger", $tags="tracing")
+    Container(traceStorage, "Jaeger", "Хранилище трейсов / UI", "Хранит трейсы и дает интерфейс поиска", $tags="tracing")
+  }
 }
 
-Rel(customer, internetShop, "Uses")
-Rel(internetShop, shopApi, "Calls")
-Rel(shopApi, shopDb, "Reads and writes")
-Rel(shopApi, filesStorage, "Uploads 3d files")
+Rel(customer, internetShop, "Оформляет заказ")
+Rel(internetShop, shopApiApp, "Вызывает API")
+Rel(shopApiApp, shopDb, "Читает и записывает данные")
+Rel(shopApiApp, filesStorage, "Загружает 3D-файлы")
+Rel(shopApiApp, shopApiTracing, "Передает данные операций для spans", $tags="tracing")
 
-Rel(seller, crm, "Uses")
-Rel(crm, crmApi, "Calls")
-Rel(crmApi, shopDb, "Reads and writes")
-Rel(crmApi, messagesQueue, "Publishes and consumes order events")
-Rel(filesStorage, crmApi, "Provides 3d files metadata")
+Rel(seller, crm, "Работает с заказами")
+Rel(crm, crmApiApp, "Вызывает API")
+Rel(crmApiApp, shopDb, "Читает и записывает данные")
+Rel(crmApiApp, messagesQueue, "Публикует и обрабатывает события заказов с trace context")
+Rel(filesStorage, crmApiApp, "Предоставляет метаданные 3D-файлов")
+Rel(crmApiApp, crmApiTracing, "Передает данные операций для spans", $tags="tracing")
 
-Rel(operator, mes, "Uses")
-Rel(mes, mesApi, "Calls")
-Rel(mesApi, mesDb, "Reads and writes")
-Rel(mesApi, filesStorage, "Reads 3d files")
-Rel(mesApi, messagesQueue, "Publishes and consumes order events")
+Rel(operator, mes, "Берет заказы в работу")
+Rel(mes, mesApiApp, "Вызывает API")
+Rel(mesApiApp, mesDb, "Читает и записывает данные")
+Rel(mesApiApp, filesStorage, "Читает 3D-файлы")
+Rel(mesApiApp, messagesQueue, "Публикует и обрабатывает события заказов с trace context")
+Rel(mesApiApp, mesApiTracing, "Передает данные операций для spans", $tags="tracing")
 
-Rel(apiUser, mesApi, "Calls public API")
+Rel(apiUser, mesApiApp, "Вызывает внешний API")
 
-Rel(shopApi, traceContext, "Propagates context in outgoing calls", $tags="tracing")
-Rel(crmApi, traceContext, "Propagates context in HTTP and RabbitMQ messages", $tags="tracing")
-Rel(mesApi, traceContext, "Propagates context in HTTP and RabbitMQ messages", $tags="tracing")
-Rel(shopApi, traceCollector, "Exports spans", $tags="tracing")
-Rel(crmApi, traceCollector, "Exports spans", $tags="tracing")
-Rel(mesApi, traceCollector, "Exports spans", $tags="tracing")
-Rel(traceSdk, traceCollector, "Sends instrumented spans", $tags="tracing")
-Rel(traceCollector, traceStorage, "Stores traces", $tags="tracing")
+Rel(shopApiTracing, traceCollector, "Отправляет spans по OTLP", $tags="tracing")
+Rel(crmApiTracing, traceCollector, "Отправляет spans по OTLP", $tags="tracing")
+Rel(mesApiTracing, traceCollector, "Отправляет spans по OTLP", $tags="tracing")
+Rel(traceCollector, traceStorage, "Сохраняет трейсы", $tags="tracing")
 
 Lay_R(customer, internetShop)
-Lay_R(internetShop, shopApi)
-Lay_R(shopApi, shopDb)
-Lay_D(shopApi, filesStorage)
+Lay_R(internetShop, shopApiApp)
+Lay_R(shopApiApp, shopDb)
+Lay_D(shopApiApp, filesStorage)
 
 Lay_R(seller, crm)
-Lay_R(crm, crmApi)
-Lay_R(crmApi, messagesQueue)
+Lay_R(crm, crmApiApp)
+Lay_R(crmApiApp, messagesQueue)
 
 Lay_R(operator, mes)
-Lay_U(mes, mesApi)
-Lay_R(mesApi, mesDb)
-Lay_R(apiUser, mesApi)
+Lay_U(mes, mesApiApp)
+Lay_R(mesApiApp, mesDb)
+Lay_R(apiUser, mesApiApp)
 
 Lay_R(traceCollector, traceStorage)
 

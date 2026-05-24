@@ -12,8 +12,11 @@ queue "RabbitMQ\nсобытия статусов" as MQ
 
 Operator -> UI: Открывает дашборд MES\nили список заказов по статусу
 UI -> API: GET /orders?status=...\n&page=...&sort=created_at_desc
-API -> API: Строит cache key\norders:list:{status}:{page}:{sort}
-API -> Cache: GET orders:list:{status}:{page}:{sort}
+API -> Cache: GET orders:list:version:{status}
+API -> Cache: GET orders:counters:version
+Cache --> API: list_version, counters_version
+API -> API: Строит cache keys\norders:list:{status}:v{list_version}:{page}:{sort}\norders:counters:v{counters_version}
+API -> Cache: MGET orders:list:{status}:v{list_version}:{page}:{sort}\norders:counters:v{counters_version}
 
 alt cache hit
   Cache --> API: Список заказов + счетчики
@@ -23,7 +26,7 @@ else cache miss
   Cache --> API: Key not found
   API -> DB: SELECT orders\nWHERE status = ...\nORDER BY created_at DESC\nLIMIT/OFFSET
   DB --> API: Список заказов + счетчики
-  API -> Cache: SETEX orders:list:{status}:{page}:{sort}\nTTL 30-60 секунд
+  API -> Cache: SETEX orders:list:{status}:v{list_version}:{page}:{sort}\nSETEX orders:counters:v{counters_version}\nTTL 30-60 секунд
   API --> UI: 200 OK, данные из БД
   UI --> Operator: Показывает список
 end
@@ -35,13 +38,13 @@ UI -> API: PATCH /orders/{order_id}/status
 API -> DB: BEGIN;\nUPDATE order SET status = new_status;\nINSERT status_history;\nCOMMIT;
 DB --> API: Статус сохранен
 API -> MQ: Publish OrderStatusChanged\norder_id, old_status, new_status
-API -> Cache: DEL orders:list:{old_status}:*\nDEL orders:list:{new_status}:*\nDEL orders:counters:*
-Cache --> API: Ключи инвалидированы
+API -> Cache: INCR orders:list:version:{old_status}\nINCR orders:list:version:{new_status}\nINCR orders:counters:version
+Cache --> API: Версии кеша обновлены
 API --> UI: 200 OK
 UI --> Operator: Статус обновлен
 
 note over API, Cache
-Если инвалидация кеша не удалась,
+Если обновление версии кеша не удалось,
 срабатывает короткий TTL как страховка.
 Для критичных случаев можно добавить retry
 через событие OrderStatusChanged.

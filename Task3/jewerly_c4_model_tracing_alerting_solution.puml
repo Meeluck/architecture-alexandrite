@@ -1,0 +1,115 @@
+@startuml jewerly_c4_model_tracing_alerting_solution
+!include <C4/C4_Component>
+
+title Ювелирная система - трейсинг, контроль заказов и алертинг
+
+AddElementTag("tracing", $bgColor="#f8cecc", $borderColor="#b85450", $fontColor="#000000")
+AddRelTag("tracing", $lineColor="#b85450", $textColor="#b85450")
+AddElementTag("alerting", $bgColor="#d5e8d4", $borderColor="#82b366", $fontColor="#000000")
+AddRelTag("alerting", $lineColor="#82b366", $textColor="#82b366")
+
+Person(customer, "Покупатель", "Создает заказы и загружает или проектирует 3D-модели")
+Person(seller, "Продавец", "Работает с заказами и подтверждает запуск производства")
+Person(operator, "Оператор", "Берет заказы в работу и изготавливает изделия")
+Person(apiUser, "Пользователь API", "Внешний партнер, который создает заказы через API")
+Person(support, "Поддержка / инженеры", "Получают алерты и разбирают зависшие заказы")
+
+System_Boundary(jewerlyStore, "Ювелирная система") {
+  System_Boundary(applicationLayer, "Прикладной слой") {
+    Container(internetShop, "Онлайн-магазин", "Vue, TypeScript, Three.js", "Позволяет оформить заказ, загрузить 3D-модель и работать в 3D-редакторе")
+    ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Хранит данные покупателей и заказов онлайн-магазина")
+
+    Container_Boundary(shopApiBoundary, "Shop API") {
+      Component(shopApiApp, "Основная логика Shop API", "Spring Boot", "Отдает витрину, принимает 3D-файлы и сохраняет данные заказа")
+      Component(shopApiTracing, "Компонент трейсинга", "OpenTelemetry SDK / agent", "Создает spans и передает trace context", $tags="tracing")
+    }
+
+    Container(crm, "CRM", "Vue, TypeScript", "Интерфейс продавца для работы с заказами")
+    Container_Boundary(crmApiBoundary, "CRM API") {
+      Component(crmApiApp, "Основная логика CRM API", "Spring Boot", "Управляет операциями CRM по заказам")
+      Component(crmApiTracing, "Компонент трейсинга", "OpenTelemetry SDK / agent", "Создает spans и передает trace context", $tags="tracing")
+    }
+
+    Container(mes, "MES", "React, TypeScript", "Интерфейс оператора для просмотра и назначения заказов")
+    Container_Boundary(mesApiBoundary, "MES API") {
+      Component(mesApiApp, "Основная логика MES API", "C#", "Назначает заказы, показывает списки и рассчитывает стоимость")
+      Component(mesApiTracing, "Компонент трейсинга", "OpenTelemetry SDK / agent", "Создает spans и передает trace context", $tags="tracing")
+    }
+    ContainerDb(mesDb, "MES DB", "PostgreSQL", "Хранит заказы, назначения операторов и статусы со стороны MES")
+
+    ContainerQueue(messagesQueue, "Очередь сообщений", "RabbitMQ", "Передает события о новых заказах и изменениях статусов между системами")
+    ContainerDb(filesStorage, "Хранилище 3D-файлов", "S3-based storage", "Хранит 3D-файлы, необходимые для расчета стоимости")
+  }
+
+  System_Boundary(tracingLayer, "Слой трейсинга") {
+    Container(traceCollector, "OpenTelemetry Collector", "OpenTelemetry", "Принимает, фильтрует и отправляет spans в Jaeger", $tags="tracing")
+    Container(traceStorage, "Jaeger", "Хранилище трейсов / UI", "Хранит трейсы и дает интерфейс поиска", $tags="tracing")
+  }
+
+  System_Boundary(metricsLayer, "Слой метрик и визуализации") {
+    Container(traceMetrics, "Метрики из трейсов", "OpenTelemetry spanmetrics", "Строит процессные метрики по spans", $tags="alerting")
+    Container(dashboards, "Дашборды по заказам", "Grafana", "Показывают путь заказов и проблемные переходы", $tags="alerting")
+  }
+
+  System_Boundary(alertingLayer, "Слой алертинга") {
+    Container(orderRules, "Правила процесса заказа", "Правила алертинга", "Находят зависшие заказы и медленные переходы", $tags="alerting")
+    Container(alertManager, "Alertmanager", "Маршрутизация алертов", "Отправляет алерты поддержке и инженерам", $tags="alerting")
+  }
+}
+
+Rel(customer, internetShop, "Оформляет заказ")
+Rel(internetShop, shopApiApp, "Вызывает API")
+Rel(shopApiApp, shopDb, "Читает и записывает данные")
+Rel(shopApiApp, filesStorage, "Загружает 3D-файлы")
+Rel(shopApiApp, shopApiTracing, "Передает данные операций для spans", $tags="tracing")
+
+Rel(seller, crm, "Работает с заказами")
+Rel(crm, crmApiApp, "Вызывает API")
+Rel(crmApiApp, shopDb, "Читает и записывает данные")
+Rel(crmApiApp, messagesQueue, "Публикует и обрабатывает события заказов с trace context")
+Rel(filesStorage, crmApiApp, "Предоставляет метаданные 3D-файлов")
+Rel(crmApiApp, crmApiTracing, "Передает данные операций для spans", $tags="tracing")
+
+Rel(operator, mes, "Берет заказы в работу")
+Rel(mes, mesApiApp, "Вызывает API")
+Rel(mesApiApp, mesDb, "Читает и записывает данные")
+Rel(mesApiApp, filesStorage, "Читает 3D-файлы")
+Rel(mesApiApp, messagesQueue, "Публикует и обрабатывает события заказов с trace context")
+Rel(mesApiApp, mesApiTracing, "Передает данные операций для spans", $tags="tracing")
+
+Rel(apiUser, mesApiApp, "Вызывает внешний API")
+
+Rel(shopApiTracing, traceCollector, "Отправляет spans по OTLP", $tags="tracing")
+Rel(crmApiTracing, traceCollector, "Отправляет spans по OTLP", $tags="tracing")
+Rel(mesApiTracing, traceCollector, "Отправляет spans по OTLP", $tags="tracing")
+Rel(traceCollector, traceStorage, "Сохраняет трейсы", $tags="tracing")
+
+Rel(traceCollector, traceMetrics, "Формирует метрики по spans", $tags="alerting")
+Rel(traceStorage, dashboards, "Дает поиск по трейсам и примеры", $tags="alerting")
+Rel(traceMetrics, dashboards, "Наполняет панели прохождения заказов", $tags="alerting")
+Rel(traceMetrics, orderRules, "Передает данные о времени переходов и пропущенных шагах", $tags="alerting")
+Rel(orderRules, alertManager, "Отправляет алерты", $tags="alerting")
+Rel(alertManager, support, "Уведомляет в чат или канал инцидентов", $tags="alerting")
+
+Lay_R(customer, internetShop)
+Lay_R(internetShop, shopApiApp)
+Lay_R(shopApiApp, shopDb)
+Lay_D(shopApiApp, filesStorage)
+
+Lay_R(seller, crm)
+Lay_R(crm, crmApiApp)
+Lay_R(crmApiApp, messagesQueue)
+
+Lay_R(operator, mes)
+Lay_U(mes, mesApiApp)
+Lay_R(mesApiApp, mesDb)
+Lay_R(apiUser, mesApiApp)
+
+Lay_R(traceCollector, traceStorage)
+Lay_D(traceCollector, traceMetrics)
+Lay_R(traceMetrics, orderRules)
+Lay_R(orderRules, alertManager)
+Lay_R(alertManager, support)
+
+SHOW_LEGEND()
+@enduml

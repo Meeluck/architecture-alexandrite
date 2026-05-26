@@ -1,0 +1,114 @@
+@startuml jewerly_c4_model_logging_solution
+!include <C4/C4_Component>
+
+title Ювелирная система - решение по логированию
+
+AddElementTag("logging", $bgColor="#fff2cc", $borderColor="#d6b656", $fontColor="#000000")
+AddRelTag("logging", $lineColor="#d6b656", $textColor="#d6b656")
+AddElementTag("analysis", $bgColor="#d5e8d4", $borderColor="#82b366", $fontColor="#000000")
+AddRelTag("analysis", $lineColor="#82b366", $textColor="#82b366")
+
+Person(customer, "Покупатель", "Создает заказы и загружает или проектирует 3D-модели")
+Person(seller, "Продавец", "Работает с заказами и подтверждает запуск производства")
+Person(operator, "Оператор", "Берет заказы в работу и изготавливает изделия")
+Person(apiUser, "Пользователь API", "Внешний партнер, который создает заказы через API")
+Person(support, "Поддержка / инженеры", "Ищут ошибки по заказам и получают алерты")
+
+System_Boundary(jewerlyStore, "Ювелирная система") {
+  System_Boundary(applicationLayer, "Прикладной слой") {
+    Container(internetShop, "Онлайн-магазин", "Vue, TypeScript, Three.js", "Позволяет оформить заказ, загрузить 3D-модель и работать в 3D-редакторе")
+    ContainerDb(shopDb, "Shop DB", "PostgreSQL", "Хранит данные покупателей и заказов онлайн-магазина")
+
+    Container_Boundary(shopApiBoundary, "Shop API") {
+      Component(shopApiApp, "Основная логика Shop API", "Spring Boot", "Отдает витрину, принимает 3D-файлы и сохраняет данные заказа")
+      Component(shopApiLogging, "Компонент логирования", "Structured JSON logger", "Пишет структурированные application- и audit-логи", $tags="logging")
+    }
+
+    Container(crm, "CRM", "Vue, TypeScript", "Интерфейс продавца для работы с заказами")
+    Container_Boundary(crmApiBoundary, "CRM API") {
+      Component(crmApiApp, "Основная логика CRM API", "Spring Boot", "Управляет операциями CRM по заказам")
+      Component(crmApiLogging, "Компонент логирования", "Structured JSON logger", "Пишет структурированные application- и audit-логи", $tags="logging")
+    }
+
+    Container(mes, "MES", "React, TypeScript", "Интерфейс оператора для просмотра и назначения заказов")
+    Container_Boundary(mesApiBoundary, "MES API") {
+      Component(mesApiApp, "Основная логика MES API", "C#", "Назначает заказы, показывает списки и рассчитывает стоимость")
+      Component(mesApiLogging, "Компонент логирования", "Structured JSON logger", "Пишет структурированные application- и audit-логи", $tags="logging")
+    }
+    ContainerDb(mesDb, "MES DB", "PostgreSQL", "Хранит заказы, назначения операторов и статусы со стороны MES")
+
+    ContainerQueue(messagesQueue, "Очередь сообщений", "RabbitMQ", "Передает события о новых заказах и изменениях статусов между системами")
+    ContainerDb(filesStorage, "Хранилище 3D-файлов", "S3-based storage", "Хранит 3D-файлы, необходимые для расчета стоимости")
+  }
+
+  System_Boundary(loggingLayer, "Слой сбора и хранения логов") {
+    Container(logAgent, "Log agent", "Fluent Bit", "Собирает JSON-логи с виртуальных машин и сервисных логов инфраструктуры", $tags="logging")
+    Container(logStorage, "OpenSearch", "Log storage and search", "Хранит индексы логов и выполняет поиск", $tags="logging")
+    Container(logUi, "OpenSearch Dashboards", "Log UI", "Позволяет искать логи, строить сохраненные запросы и дашборды", $tags="logging")
+  }
+
+  System_Boundary(analysisLayer, "Слой анализа и алертинга") {
+    Container(logRules, "Правила анализа логов", "OpenSearch Alerting", "Находит всплески ошибок, зависания заказов и аномалии", $tags="analysis")
+    Container(alertChannel, "Канал уведомлений", "Chat / incident channel", "Получает алерты для поддержки и инженеров", $tags="analysis")
+  }
+}
+
+Rel(customer, internetShop, "Оформляет заказ")
+Rel(internetShop, shopApiApp, "Вызывает API")
+Rel(shopApiApp, shopDb, "Читает и записывает данные")
+Rel(shopApiApp, filesStorage, "Загружает 3D-файлы")
+Rel(shopApiApp, shopApiLogging, "Передает события для записи в лог", $tags="logging")
+
+Rel(seller, crm, "Работает с заказами")
+Rel(crm, crmApiApp, "Вызывает API")
+Rel(crmApiApp, shopDb, "Читает и записывает данные")
+Rel(crmApiApp, messagesQueue, "Публикует и обрабатывает события заказов")
+Rel(filesStorage, crmApiApp, "Предоставляет метаданные 3D-файлов")
+Rel(crmApiApp, crmApiLogging, "Передает события для записи в лог", $tags="logging")
+
+Rel(operator, mes, "Берет заказы в работу")
+Rel(mes, mesApiApp, "Вызывает API")
+Rel(mesApiApp, mesDb, "Читает и записывает данные")
+Rel(mesApiApp, filesStorage, "Читает 3D-файлы")
+Rel(mesApiApp, messagesQueue, "Публикует и обрабатывает события заказов")
+Rel(mesApiApp, mesApiLogging, "Передает события для записи в лог", $tags="logging")
+
+Rel(apiUser, mesApiApp, "Вызывает внешний API")
+
+Rel(shopApiLogging, logAgent, "Пишет JSON-логи в stdout/file", $tags="logging")
+Rel(crmApiLogging, logAgent, "Пишет JSON-логи в stdout/file", $tags="logging")
+Rel(mesApiLogging, logAgent, "Пишет JSON-логи в stdout/file", $tags="logging")
+Rel(messagesQueue, logAgent, "Отдает сервисные логи RabbitMQ", $tags="logging")
+Rel(shopDb, logAgent, "Отдает медленные запросы и ошибки БД", $tags="logging")
+Rel(mesDb, logAgent, "Отдает медленные запросы и ошибки БД", $tags="logging")
+Rel(filesStorage, logAgent, "Отдает access/error-логи хранилища", $tags="logging")
+
+Rel(logAgent, logStorage, "Отправляет нормализованные логи", $tags="logging")
+Rel(logStorage, logUi, "Предоставляет поиск и агрегации", $tags="logging")
+Rel(support, logUi, "Ищет логи по order_id, trace_id и ошибкам")
+
+Rel(logStorage, logRules, "Передает данные для правил", $tags="analysis")
+Rel(logRules, alertChannel, "Отправляет алерты", $tags="analysis")
+Rel(alertChannel, support, "Уведомляет о проблемах", $tags="analysis")
+
+Lay_R(customer, internetShop)
+Lay_R(internetShop, shopApiApp)
+Lay_R(shopApiApp, shopDb)
+Lay_D(shopApiApp, filesStorage)
+
+Lay_R(seller, crm)
+Lay_R(crm, crmApiApp)
+Lay_R(crmApiApp, messagesQueue)
+
+Lay_R(operator, mes)
+Lay_U(mes, mesApiApp)
+Lay_R(mesApiApp, mesDb)
+Lay_R(apiUser, mesApiApp)
+
+Lay_R(logAgent, logStorage)
+Lay_R(logStorage, logUi)
+Lay_D(logStorage, logRules)
+Lay_R(logRules, alertChannel)
+
+SHOW_LEGEND()
+@enduml
